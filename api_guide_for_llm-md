@@ -1,0 +1,313 @@
+# Enrut API Guide for LLM-Powered Application Development
+
+## Overview
+
+This document provides a guide for Large Language Models (LLMs) to understand and interact with the Enrut API. The primary source of truth for endpoints, request/response schemas, and parameters is the `openapi.yaml` specification file located at `src/api-definition/openapi.yaml`. This guide supplements the OpenAPI spec by explaining key concepts like authentication and outlining the core resources managed by the API.
+
+The Enrut API provides a RESTful interface to the Enrut data platform, focusing on fleet management, vehicle tracking, route management, and related functionalities.
+
+## Data Model
+
+The API is built on a DynamoDB backend using a single-table design pattern. The schema is defined in `src/functions/shared/schema.mjs` and includes the following main entities:
+
+### Core Entities
+
+1. **Company**
+   - Primary attributes: id, name, city, phone, address, email
+   - Access pattern: Direct lookup by company ID
+
+2. **Vehicle**
+   - Primary attributes: id, companyId, number, status, driverId, routeId
+   - Additional attributes: tripProgress, tripId, lastPosition (includes geohash, coordinates, speed)
+   - Access patterns:
+     - List all vehicles
+     - List vehicles by route and progress
+     - List vehicles by geohash location
+
+3. **Driver**
+   - Primary attributes: id, companyId, name, phone, email, vehicleId
+   - Access patterns:
+     - List all drivers
+     - Get driver by company
+
+4. **Position**
+   - Primary attributes: companyId, vehicleId, timestamp
+   - Location data: latitude, longitude, speed, altitude, accuracy
+   - Trip context: tripId
+
+5. **Route**
+   - Primary attributes: id, name, origin, destination
+   - Additional data: routeFile, totalDistance
+
+6. **Trip**
+   - Primary attributes: id, companyId, vehicleId, driverId, routeId
+   - Temporal data: startTime, endTime
+   - Status tracking: status (e.g., "IN_PROGRESS")
+
+## Authentication
+
+The Enrut API uses Amazon Cognito for user authentication and authorization, secured via JSON Web Tokens (JWT).
+
+### Login Flow
+
+**Request:**
+```http
+POST /login
+Content-Type: application/json
+
+{
+    "username": "user@example.com",
+    "password": "yourPassword123"
+}
+```
+
+**Response:**
+```json
+{
+    "idToken": "eyJhbGciOiJS...",
+    "accessToken": "eyJhbGciOiJS...",
+    "refreshToken": "eyJjdHkiOiJKV...",
+    "expiresIn": 3600
+}
+```
+
+### Token Refresh
+
+**Request:**
+```http
+POST /refresh
+Content-Type: application/json
+
+{
+    "refreshToken": "eyJjdHkiOiJKV..."
+}
+```
+
+**Response:**
+```json
+{
+    "idToken": "eyJhbGciOiJS...",
+    "accessToken": "eyJhbGciOiJS...",
+    "expiresIn": 3600
+}
+```
+
+## Core Resources and Endpoints
+
+### Companies
+
+**Create Company:**
+```http
+POST /companies
+Authorization: Bearer <idToken>
+Content-Type: application/json
+
+{
+    "name": "Acme Logistics",
+    "city": "New York",
+    "phone": "+1234567890",
+    "address": "123 Main St",
+    "email": "contact@acme.com"
+}
+```
+
+**List Companies:**
+```http
+GET /companies
+Authorization: Bearer <idToken>
+```
+
+**Get Company:**
+```http
+GET /companies/{companyId}
+Authorization: Bearer <idToken>
+```
+
+### Vehicles
+
+**Create Vehicle:**
+```http
+POST /companies/{companyId}/vehicles
+Authorization: Bearer <idToken>
+Content-Type: application/json
+
+{
+    "number": "VH-001",
+    "status": "ACTIVE",
+    "driverId": "DRV-123"
+}
+```
+
+**Update Vehicle Position:**
+```http
+POST /companies/{companyId}/vehicles/{vehicleId}/positions
+Authorization: Bearer <idToken>
+Content-Type: application/json
+
+{
+    "latitude": 40.7128,
+    "longitude": -74.0060,
+    "speed": 45.5,
+    "altitude": 100,
+    "accuracy": 5,
+    "timestamp": "2024-03-20T10:30:00Z",
+    "tripId": "TRIP-123"
+}
+```
+
+### Trips
+
+**Start Trip:**
+```http
+POST /companies/{companyId}/vehicles/{vehicleId}/start-trip
+Authorization: Bearer <idToken>
+Content-Type: application/json
+
+{
+    "routeId": "RT-123",
+    "driverId": "DRV-123"
+}
+```
+
+**Complete Trip:**
+```http
+POST /companies/{companyId}/vehicles/{vehicleId}/complete-trip
+Authorization: Bearer <idToken>
+Content-Type: application/json
+
+{
+    "tripId": "TRIP-123"
+}
+```
+
+### Routes
+
+**Create Route:**
+```http
+POST /routes
+Authorization: Bearer <idToken>
+Content-Type: application/json
+
+{
+    "name": "Downtown Express",
+    "origin": "Warehouse A",
+    "destination": "City Center",
+    "totalDistance": 15.5,
+    "routeFile": "{\"type\":\"LineString\",\"coordinates\":[[...]]}"
+}
+```
+
+**Get Route Status:**
+```http
+GET /routes/{routeId}/vehicle-status
+Authorization: Bearer <idToken>
+```
+
+## Error Handling
+
+The API uses standard HTTP status codes and returns error responses in the following format:
+
+```json
+{
+    "message": "Detailed error message",
+    "code": "ERROR_CODE",
+    "details": {
+        "field": "Additional error context"
+    }
+}
+```
+
+Common status codes:
+- 400: Bad Request (invalid input)
+- 401: Unauthorized (invalid/missing token)
+- 403: Forbidden (insufficient permissions)
+- 404: Not Found
+- 409: Conflict (e.g., duplicate resource)
+- 500: Internal Server Error
+
+## Data Access Patterns
+
+The schema supports the following key access patterns:
+
+1. **Vehicle Tracking:**
+   - Get vehicle's current position and status
+   - List vehicles by route with progress
+   - Get vehicles within a geographic area (geohash)
+
+2. **Trip Management:**
+   - List all trips for a vehicle
+   - Get active trips by route
+   - Track trip progress and completion
+
+3. **Route Operations:**
+   - List routes by company
+   - Get all vehicles currently on a route
+   - Access route geometry and checkpoints
+
+## Best Practices
+
+1. **Token Management:**
+   - Store tokens securely
+   - Implement proactive token refresh
+   - Handle token expiration gracefully
+
+2. **Real-time Updates:**
+   - Poll vehicle positions at appropriate intervals
+   - Use websockets when available for real-time updates
+   - Implement exponential backoff for retries
+
+3. **Error Handling:**
+   - Implement comprehensive error handling
+   - Log relevant error details
+   - Provide meaningful error messages to end users
+
+4. **Data Consistency:**
+   - Validate data before sending
+   - Handle timezone conversions properly
+   - Use ISO 8601 format for all timestamps
+
+## Rate Limiting and Quotas
+
+- Standard rate limit: 1000 requests per minute per token
+- Position updates: 60 updates per minute per vehicle
+- Bulk operations: 100 items per request maximum
+
+## Security Considerations
+
+1. **Token Security:**
+   - Never log or expose tokens
+   - Implement secure token storage
+   - Rotate refresh tokens periodically
+
+2. **Data Privacy:**
+   - Implement proper data access controls
+   - Validate user permissions for each request
+   - Handle sensitive data according to privacy policies
+
+3. **API Security:**
+   - Use HTTPS for all requests
+   - Implement request signing where required
+   - Follow security best practices for JWT handling
+
+## Using the OpenAPI Specification (`openapi.yaml`)
+
+The `openapi.yaml` file is the definitive source for:
+
+*   Exact endpoint paths and HTTP methods (`GET`, `POST`, `PUT`, `DELETE`).
+*   Required and optional path parameters (e.g., `{companyId}`).
+*   Required and optional query parameters (e.g., `sort`).
+*   Request body schemas (JSON structures).
+*   Response schemas for different status codes (e.g., 200 OK, 400 Bad Request).
+*   Security requirements for each endpoint.
+
+LLMs should parse this file to understand the precise structure of API calls and expected responses.
+
+## Tips for LLM Integration
+
+*   **Authentication Flow:** Always implement the login/refresh token flow first. Store tokens securely and refresh them proactively using the `/login` and `/refresh` endpoints.
+*   **Authorization Header:** Remember to place the `idToken` directly in the `Authorization` header for authenticated calls.
+*   **Base URL:** Use the appropriate server URL from the `servers` section in `openapi.yaml` (Dev, QA, Prod).
+*   **Error Handling:** Implement robust error handling based on the HTTP status codes and response schemas defined in the OpenAPI spec (e.g., 400, 401, 403, 404, 500). Check the `message` field in error responses.
+*   **Resource Relationships:** Understand the relationships (e.g., a Vehicle belongs to a Company, a Trip is associated with a Vehicle and a Route). Use the correct IDs when making calls.
+*   **Data Formats:** Pay close attention to data formats, especially `date-time` strings and coordinate arrays (`[longitude, latitude]`).
+*   **Step Functions/S3 Integration:** Note that some endpoints (`POST /.../positions`, `GET /routes/{routeId}/file`) have direct integrations with other AWS services (Step Functions, S3), which might affect response times or formats compared to standard Lambda-backed endpoints. 
